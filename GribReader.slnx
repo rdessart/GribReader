@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="src/ESky.Grib/ESky.Grib.csproj" />
   <Project Path="tests/ESky.Grib.Tests/ESky.Grib.Tests.csproj" />
+  <Project Path="tests/ESky.Grib.AotSmoke/ESky.Grib.AotSmoke.csproj" />
 </Solution>

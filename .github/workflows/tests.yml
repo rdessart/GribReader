@@ -65,7 +65,7 @@ jobs:
         run: ./artifacts/aot-smoke/ESky.Grib.AotSmoke
 
   icon-eu-live:
-    name: Live ICON-EU CCSDS
+    name: Live ICON-EU
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
@@ -104,7 +104,9 @@ jobs:
           bzip2 -dc /tmp/icon-eu.grib2.bz2 > /tmp/icon-eu.grib2
           echo "ICON_EU_GRIB_FILE=/tmp/icon-eu.grib2" >> "$GITHUB_ENV"
 
-      - name: Decode real ICON-EU file
+      - name: Validate current DWD data and client
+        env:
+          ICON_EU_LIVE: "1"
         run: >-
           dotnet test GribReader.slnx
           --no-restore

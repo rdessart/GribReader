@@ -24,7 +24,10 @@ dotnet test GribReader.slnx
 - Multiple fields per message and concatenated GRIB2 messages
 - Synchronous and asynchronous Stream APIs
 - Fast nearest-point lookup on regular latitude/longitude grids
-- Application-facing temperature/wind queries by position, pressure level and forecast time
+- Bilinear interpolation on regular latitude/longitude grids
+- Log-pressure interpolation between pressure levels
+- Linear interpolation between forecast valid times
+- Application-facing temperature/wind queries by position, pressure level, pressure altitude and valid time
 
 Template 5.42 is implemented entirely in managed C#, without a native
 `libaec` dependency. This keeps the core library usable on Avalonia desktop,
@@ -72,28 +75,43 @@ var wind = weather.GetWind(
     pressureHpa: 500,
     forecastOffset: TimeSpan.FromHours(6));
 
-if (wind is { } w)
+var interpolatedWind = weather.GetInterpolatedWind(
+    latitude: 50.90,
+    longitude: 4.48,
+    pressureHpa: 475,
+    validTimeUtc: new DateTime(2026, 9, 28, 11, 30, 0, DateTimeKind.Utc));
+
+var cruiseWind = weather.GetWindAtPressureAltitudeFeet(
+    latitude: 50.90,
+    longitude: 4.48,
+    altitudeFeet: 34_000,
+    validTimeUtc: new DateTime(2026, 9, 28, 11, 30, 0, DateTimeKind.Utc));
+
+if (cruiseWind is { } w)
 {
     Console.WriteLine(
         $"{w.SpeedMetersPerSecond:F1} m/s from {w.DirectionFromDegrees:F0}°");
 }
-
-var temperature = weather.GetTemperature(
-    latitude: 50.90,
-    longitude: 4.48,
-    pressureHpa: 500,
-    forecastOffset: TimeSpan.FromHours(6));
 ```
 
-For non-convenience parameters, use `GribWeatherDataset.GetValue` with a
-`GribParameter` and `GribLevel`. `GetValueAtValidTime` is available when
-the application works with UTC valid times rather than forecast offsets.
+The interpolated APIs do not extrapolate. A request outside the grid, outside
+the available pressure levels, or outside the available forecast-time range
+returns `null`.
+
+Pressure-altitude helpers interpret altitude using the International Standard
+Atmosphere and query pressure-level GRIB fields. They do **not** derive pressure
+for ICON hybrid/model levels; supporting model-level vertical coordinates will
+require the corresponding model-level pressure/geopotential metadata.
+
+For non-convenience parameters, use
+`GribWeatherDataset.GetInterpolatedValueAtValidTime` with a `GribParameter`
+and `GribLevel`.
 
 ## Next extensions
 
 - Additional Product Definition Templates such as 4.8 for accumulated/statistical fields
 - Additional grid definitions where useful
-- Interpolation between grid points, pressure levels and forecast times
+- ICON hybrid/model-level vertical-coordinate support
 - Additional WMO parameter constants as application requirements grow
 
 See `THIRD_PARTY_NOTICES.md` for attribution for the managed AEC decoder and

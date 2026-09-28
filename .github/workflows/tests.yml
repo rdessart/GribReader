@@ -7,6 +7,9 @@ on:
   pull_request:
     branches:
       - master
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 0'
 
 permissions:
   contents: read
@@ -30,3 +33,54 @@ jobs:
 
       - name: Test
         run: dotnet test GribReader.slnx --no-restore --configuration Release --verbosity normal
+
+  icon-eu-live:
+    name: Live ICON-EU CCSDS
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore GribReader.slnx
+
+      - name: Download current ICON-EU U-wind field
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base="https://opendata.dwd.de/weather/nwp/icon-eu/grib/00/u/"
+          file="$(
+            curl -fsSL "$base" |
+            grep -oE 'icon-eu_europe_regular-lat-lon_model-level_[0-9]{10}_000_10_U\.grib2\.bz2' |
+            sort -u |
+            tail -n 1
+          )"
+
+          if [ -z "$file" ]; then
+            echo "Could not find a current ICON-EU regular-lat/lon U-wind file." >&2
+            exit 1
+          fi
+
+          echo "Using $file"
+          curl -fL --retry 3 --retry-delay 2 "$base$file" -o /tmp/icon-eu.grib2.bz2
+          bzip2 -dc /tmp/icon-eu.grib2.bz2 > /tmp/icon-eu.grib2
+          echo "ICON_EU_GRIB_FILE=/tmp/icon-eu.grib2" >> "$GITHUB_ENV"
+
+      - name: Decode real ICON-EU file
+        run: >-
+          dotnet test GribReader.slnx
+          --no-restore
+          --configuration Release
+          --filter "Category=LiveIconEu"
+          --verbosity normal

@@ -11,6 +11,7 @@ public sealed class GribDecoderRegistry
     {
         Register(new RegularLatLonGridDecoder());
         Register(new SimplePackingDecoder());
+        Register(new CcsdsPackingDecoder());
     }
 
     public GribDecoderRegistry Register(IGridDefinitionDecoder decoder)

@@ -2,8 +2,9 @@ namespace ESky.Grib.Models;
 
 public sealed record GribFixedSurface(byte Type, sbyte ScaleFactor, uint ScaledValue)
 {
-    public bool IsMissing => Type == 255 || ScaledValue == uint.MaxValue;
-    public double? Value => IsMissing ? null : ScaledValue * Math.Pow(10.0, -ScaleFactor);
+    public bool IsMissing => Type == 255;
+    public bool HasValue => !IsMissing && ScaledValue != uint.MaxValue;
+    public double? Value => HasValue ? ScaledValue * Math.Pow(10.0, -ScaleFactor) : null;
 }
 
 public sealed record GribProductDefinition(

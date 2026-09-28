@@ -12,14 +12,30 @@ internal static class GribTestMessageBuilder
         short binaryScale = 0,
         short decimalScale = 0,
         byte? bitmap = null,
-        byte scanningMode = 0x40)
+        byte scanningMode = 0x40,
+        byte parameterCategory = 2,
+        byte parameterNumber = 2,
+        byte surfaceType = 100,
+        uint surfaceScaledValue = 50_000,
+        int forecastHours = 6,
+        byte discipline = 0)
     {
         var sections = new List<byte[]>
         {
             Identification(),
             Grid2x2(scanningMode),
-            Product(),
-            Representation(representedValueCount, referenceValue, binaryScale, decimalScale, bitsPerValue),
+            Product(
+                parameterCategory,
+                parameterNumber,
+                surfaceType,
+                surfaceScaledValue,
+                forecastHours),
+            Representation(
+                representedValueCount,
+                referenceValue,
+                binaryScale,
+                decimalScale,
+                bitsPerValue),
             Bitmap(bitmap),
             Data(packedValues)
         };
@@ -27,9 +43,11 @@ internal static class GribTestMessageBuilder
         var totalLength = 16 + sections.Sum(s => s.Length) + 4;
         var message = new byte[totalLength];
         "GRIB"u8.CopyTo(message);
-        message[6] = 0; // meteorological products
+        message[6] = discipline;
         message[7] = 2;
-        BinaryPrimitives.WriteUInt64BigEndian(message.AsSpan(8, 8), (ulong)totalLength);
+        BinaryPrimitives.WriteUInt64BigEndian(
+            message.AsSpan(8, 8),
+            (ulong)totalLength);
 
         var offset = 16;
         foreach (var section in sections)
@@ -45,7 +63,7 @@ internal static class GribTestMessageBuilder
     private static byte[] Identification()
     {
         var s = Section(1, 21);
-        WriteU16(s, 5, 98);    // ECMWF center just as deterministic test data
+        WriteU16(s, 5, 98);
         WriteU16(s, 7, 0);
         s[9] = 2;
         s[10] = 0;
@@ -68,51 +86,61 @@ internal static class GribTestMessageBuilder
         WriteU32(s, 6, 4);
         s[10] = 0;
         s[11] = 0;
-        WriteU16(s, 12, 0); // template 3.0
-        s[14] = 6;          // spherical earth, radius 6,371,229 m
-        WriteU32(s, 30, 2); // Ni
-        WriteU32(s, 34, 2); // Nj
+        WriteU16(s, 12, 0);
+        s[14] = 6;
+        WriteU32(s, 30, 2);
+        WriteU32(s, 34, 2);
         WriteU32(s, 38, 0);
         WriteU32(s, 42, 0);
-        WriteS32(s, 46, 50_000_000); // 50 N
-        WriteS32(s, 50, 4_000_000);  // 4 E
+        WriteS32(s, 46, 50_000_000);
+        WriteS32(s, 50, 4_000_000);
         s[54] = 0x30;
-        WriteS32(s, 55, 51_000_000); // 51 N
-        WriteS32(s, 59, 5_000_000);  // 5 E
+        WriteS32(s, 55, 51_000_000);
+        WriteS32(s, 59, 5_000_000);
         WriteU32(s, 63, 1_000_000);
         WriteU32(s, 67, 1_000_000);
         s[71] = scanningMode;
         return s;
     }
 
-    private static byte[] Product()
+    private static byte[] Product(
+        byte parameterCategory,
+        byte parameterNumber,
+        byte surfaceType,
+        uint surfaceScaledValue,
+        int forecastHours)
     {
         var s = Section(4, 34);
         WriteU16(s, 5, 0);
-        WriteU16(s, 7, 0); // PDT 4.0
-        s[9] = 2;          // momentum
-        s[10] = 2;         // U-component of wind (test metadata)
+        WriteU16(s, 7, 0);
+        s[9] = parameterCategory;
+        s[10] = parameterNumber;
         s[11] = 2;
         s[12] = 0;
         s[13] = 0;
         WriteU16(s, 14, 0);
         s[16] = 0;
-        s[17] = 1;         // hours
-        WriteS32(s, 18, 6);
-        s[22] = 100;       // isobaric surface
-        s[23] = 0;
-        WriteU32(s, 24, 50_000);
+        s[17] = 1;
+        WriteS32(s, 18, forecastHours);
+        s[22] = surfaceType;
+        s[23] = surfaceScaledValue == uint.MaxValue ? (byte)255 : (byte)0;
+        WriteU32(s, 24, surfaceScaledValue);
         s[28] = 255;
         s[29] = 255;
         WriteU32(s, 30, uint.MaxValue);
         return s;
     }
 
-    private static byte[] Representation(uint count, float reference, short binaryScale, short decimalScale, byte bits)
+    private static byte[] Representation(
+        uint count,
+        float reference,
+        short binaryScale,
+        short decimalScale,
+        byte bits)
     {
         var s = Section(5, 21);
         WriteU32(s, 5, count);
-        WriteU16(s, 9, 0); // DRT 5.0
+        WriteU16(s, 9, 0);
         WriteF32(s, 11, reference);
         WriteS16(s, 15, binaryScale);
         WriteS16(s, 17, decimalScale);
@@ -151,8 +179,11 @@ internal static class GribTestMessageBuilder
         return bytes;
     }
 
-    private static void WriteU16(byte[] b, int o, ushort v) => BinaryPrimitives.WriteUInt16BigEndian(b.AsSpan(o, 2), v);
-    private static void WriteU32(byte[] b, int o, uint v) => BinaryPrimitives.WriteUInt32BigEndian(b.AsSpan(o, 4), v);
+    private static void WriteU16(byte[] b, int o, ushort v) =>
+        BinaryPrimitives.WriteUInt16BigEndian(b.AsSpan(o, 2), v);
+
+    private static void WriteU32(byte[] b, int o, uint v) =>
+        BinaryPrimitives.WriteUInt32BigEndian(b.AsSpan(o, 4), v);
 
     private static void WriteS16(byte[] b, int o, short v)
     {
@@ -169,5 +200,7 @@ internal static class GribTestMessageBuilder
     }
 
     private static void WriteF32(byte[] b, int o, float v) =>
-        BinaryPrimitives.WriteInt32BigEndian(b.AsSpan(o, 4), BitConverter.SingleToInt32Bits(v));
+        BinaryPrimitives.WriteInt32BigEndian(
+            b.AsSpan(o, 4),
+            BitConverter.SingleToInt32Bits(v));
 }

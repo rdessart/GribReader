@@ -31,26 +31,17 @@ public sealed class GribField
         }
     }
 
-    public (double Latitude, double Longitude, double Value) GetNearest(double latitude, double longitude)
+    public (double Latitude, double Longitude, double Value) GetNearest(
+        double latitude,
+        double longitude)
     {
         if (Grid is not RegularLatLonGrid grid)
             throw new NotSupportedException("Nearest-point lookup is currently implemented only for regular latitude/longitude grids.");
 
-        var bestDistance = double.MaxValue;
-        var best = (Latitude: double.NaN, Longitude: double.NaN, Value: double.NaN);
+        var (i, j) = grid.GetNearestIndices(latitude, longitude);
+        var coordinate = grid.GetCoordinate(i, j);
 
-        foreach (var point in EnumeratePoints())
-        {
-            var dLat = point.Latitude - latitude;
-            var dLon = ShortestLongitudeDelta(point.Longitude, longitude);
-            var score = dLat * dLat + dLon * dLon;
-            if (score >= bestDistance) continue;
-
-            bestDistance = score;
-            best = point;
-        }
-
-        return best;
+        return (coordinate.Latitude, coordinate.Longitude, GetValue(i, j));
     }
 
     private static int GetScanIndex(RegularLatLonGrid grid, int i, int j)
@@ -70,13 +61,5 @@ public sealed class GribField
             ? grid.Height - 1 - j
             : j;
         return checked(i * grid.Height + scanJ);
-    }
-
-    private static double ShortestLongitudeDelta(double a, double b)
-    {
-        var d = (a - b) % 360.0;
-        if (d > 180.0) d -= 360.0;
-        if (d < -180.0) d += 360.0;
-        return d;
     }
 }

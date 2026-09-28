@@ -36,11 +36,63 @@ public sealed record RegularLatLonGrid(
         return (latitude, longitude);
     }
 
+    public (int I, int J) GetNearestIndices(double latitude, double longitude)
+    {
+        var latitudeStep = JScansPositively ? JIncrement : -JIncrement;
+        var j = latitudeStep == 0
+            ? 0
+            : (int)Math.Round(
+                (latitude - FirstLatitude) / latitudeStep,
+                MidpointRounding.AwayFromZero);
+
+        j = Math.Clamp(j, 0, Height - 1);
+
+        if (IIncrement == 0 || Width == 1)
+            return (0, j);
+
+        var longitudeStep = IScansNegatively ? -IIncrement : IIncrement;
+        var bestI = 0;
+        var bestDistance = double.MaxValue;
+
+        // The encoded grid may use either [-180,180] or [0,360] longitudes.
+        // Try equivalent target longitudes so antimeridian-adjacent grids work
+        // without scanning every point.
+        for (var wrap = -2; wrap <= 2; wrap++)
+        {
+            var unwrappedTarget = longitude + wrap * 360.0;
+            var i = (int)Math.Round(
+                (unwrappedTarget - FirstLongitude) / longitudeStep,
+                MidpointRounding.AwayFromZero);
+
+            i = Math.Clamp(i, 0, Width - 1);
+
+            var candidateLongitude = FirstLongitude + i * longitudeStep;
+            var distance = Math.Abs(
+                NormalizeLongitudeDelta(candidateLongitude - longitude));
+
+            if (distance >= bestDistance)
+                continue;
+
+            bestDistance = distance;
+            bestI = i;
+        }
+
+        return (bestI, j);
+    }
+
     private static double NormalizeLongitude(double longitude)
     {
         longitude %= 360.0;
         if (longitude > 180.0) longitude -= 360.0;
         if (longitude <= -180.0) longitude += 360.0;
         return longitude;
+    }
+
+    private static double NormalizeLongitudeDelta(double delta)
+    {
+        delta %= 360.0;
+        if (delta > 180.0) delta -= 360.0;
+        if (delta < -180.0) delta += 360.0;
+        return delta;
     }
 }

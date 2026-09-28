@@ -44,6 +44,47 @@ public sealed class GribField
         return (coordinate.Latitude, coordinate.Longitude, GetValue(i, j));
     }
 
+    /// <summary>
+    /// Returns a bilinearly interpolated value for a position inside a regular
+    /// latitude/longitude grid. No horizontal extrapolation is performed.
+    /// </summary>
+    public double? GetBilinearInterpolatedValue(double latitude, double longitude)
+    {
+        if (Grid is not RegularLatLonGrid grid)
+            throw new NotSupportedException("Bilinear interpolation is currently implemented only for regular latitude/longitude grids.");
+
+        if (!grid.TryGetFractionalIndices(latitude, longitude, out var fi, out var fj))
+            return null;
+
+        var i0 = (int)Math.Floor(fi);
+        var j0 = (int)Math.Floor(fj);
+        var i1 = Math.Min(i0 + 1, grid.Width - 1);
+        var j1 = Math.Min(j0 + 1, grid.Height - 1);
+
+        var tx = fi - i0;
+        var ty = fj - j0;
+
+        var v00 = GetValue(i0, j0);
+        var v10 = GetValue(i1, j0);
+        var v01 = GetValue(i0, j1);
+        var v11 = GetValue(i1, j1);
+
+        if (!double.IsFinite(v00) ||
+            !double.IsFinite(v10) ||
+            !double.IsFinite(v01) ||
+            !double.IsFinite(v11))
+        {
+            return null;
+        }
+
+        var bottom = Lerp(v00, v10, tx);
+        var top = Lerp(v01, v11, tx);
+        return Lerp(bottom, top, ty);
+    }
+
+    private static double Lerp(double a, double b, double t) =>
+        a + (b - a) * t;
+
     private static int GetScanIndex(RegularLatLonGrid grid, int i, int j)
     {
         if ((uint)i >= grid.Ni) throw new ArgumentOutOfRangeException(nameof(i));

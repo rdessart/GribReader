@@ -4,8 +4,8 @@ A dependency-free GRIB2 reader core for cross-platform .NET and Avalonia applica
 
 ## Projects
 
-- `src/ESky.Grib` — GRIB2 parser, models and pluggable template decoders
-- `tests/ESky.Grib.Tests` — xUnit tests using synthetic messages and small real GRIB2 fixtures
+- `src/ESky.Grib` — GRIB2 parser, models, packing decoders and weather-query API
+- `tests/ESky.Grib.Tests` — xUnit tests using synthetic messages and real GRIB2 fixtures
 
 ## Build
 
@@ -23,6 +23,8 @@ dotnet test GribReader.slnx
 - Optional Section 6 bitmaps
 - Multiple fields per message and concatenated GRIB2 messages
 - Synchronous and asynchronous Stream APIs
+- Fast nearest-point lookup on regular latitude/longitude grids
+- Application-facing temperature/wind queries by position, pressure level and forecast time
 
 Template 5.42 is implemented entirely in managed C#, without a native
 `libaec` dependency. This keeps the core library usable on Avalonia desktop,
@@ -31,15 +33,17 @@ iOS and Android targets.
 ## ICON-EU
 
 Current DWD ICON/ICON-EU Open Data uses CCSDS packing (GRIB2 template 5.42).
-The reader can therefore decode the regular-latitude/longitude instantaneous
-fields needed for an initial aviation weather layer, provided the GRIB message
-uses Product Definition Template 4.0.
+The reader can decode current regular-latitude/longitude instantaneous fields
+that use Product Definition Template 4.0.
 
 DWD distributes many files as `.grib2.bz2`. BZip2 transport decompression is
 outside the GRIB format and is intentionally not part of this core reader:
 pass the decompressed GRIB2 stream to `GribReader`.
 
-## Example
+The GitHub Actions workflow also contains a scheduled/manual live integration
+job that downloads a current DWD ICON-EU U-wind field and decodes it end-to-end.
+
+## Low-level example
 
 ```csharp
 await using var stream = File.OpenRead("weather.grib2");
@@ -53,12 +57,44 @@ foreach (var field in message.Fields)
 }
 ```
 
+## Weather dataset example
+
+```csharp
+using ESky.Grib.Weather;
+
+var reader = new GribReader();
+var messages = reader.ReadAll(gribStream);
+var weather = new GribWeatherDataset(messages);
+
+var wind = weather.GetWind(
+    latitude: 50.90,
+    longitude: 4.48,
+    pressureHpa: 500,
+    forecastOffset: TimeSpan.FromHours(6));
+
+if (wind is { } w)
+{
+    Console.WriteLine(
+        $"{w.SpeedMetersPerSecond:F1} m/s from {w.DirectionFromDegrees:F0}°");
+}
+
+var temperature = weather.GetTemperature(
+    latitude: 50.90,
+    longitude: 4.48,
+    pressureHpa: 500,
+    forecastOffset: TimeSpan.FromHours(6));
+```
+
+For non-convenience parameters, use `GribWeatherDataset.GetValue` with a
+`GribParameter` and `GribLevel`. `GetValueAtValidTime` is available when
+the application works with UTC valid times rather than forecast offsets.
+
 ## Next extensions
 
 - Additional Product Definition Templates such as 4.8 for accumulated/statistical fields
 - Additional grid definitions where useful
-- Higher-level weather dataset queries (wind/temperature by position, pressure and forecast time)
-- Additional packing templates as real data requires them
+- Interpolation between grid points, pressure levels and forecast times
+- Additional WMO parameter constants as application requirements grow
 
 See `THIRD_PARTY_NOTICES.md` for attribution for the managed AEC decoder and
 the CCSDS integration fixture.

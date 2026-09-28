@@ -164,7 +164,7 @@ public sealed class CcsdsPackingDecoderTests
         {
             for (var bit = bitCount - 1; bit >= 0; bit--)
             {
-                _current = (byte)((_current << 1) | ((value >> bit) & 1u));
+                _current = (byte)(((uint)_current << 1) | ((value >> bit) & 1u));
                 _count++;
 
                 if (_count != 8)

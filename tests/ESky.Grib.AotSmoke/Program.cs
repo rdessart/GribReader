@@ -1,23 +1,22 @@
 using ESky.Grib;
 using ESky.Grib.Decoding;
+using ESky.Grib.IconEu;
 using ESky.Grib.Models;
 using ESky.Grib.Weather;
+using ICSharpCode.SharpZipLib.BZip2;
+using System.Net;
+using System.Net.Http;
 
 RunRealGribSmokeTest();
 RunManagedAecSmokeTest();
 RunWeatherApiSmokeTest();
+await RunIconEuClientSmokeTestAsync();
 
 Console.WriteLine("NativeAOT GRIB smoke test passed.");
 
 static void RunRealGribSmokeTest()
 {
-    var fixture = Path.Combine(
-        AppContext.BaseDirectory,
-        "TestData",
-        "regular_ll_ccsds.grib2");
-
-    if (!File.Exists(fixture))
-        throw new InvalidOperationException($"GRIB fixture not found: {fixture}");
+    var fixture = FixturePath();
 
     using var stream = File.OpenRead(fixture);
     var message = new GribReader().Read(stream);
@@ -110,10 +109,111 @@ static void RunWeatherApiSmokeTest()
         throw new InvalidOperationException("Wind API smoke test failed.");
 }
 
+static async Task RunIconEuClientSmokeTestAsync()
+{
+    const string fileName =
+        "icon-eu_europe_regular-lat-lon_pressure-level_2026092809_000_500_U.grib2.bz2";
+
+    var compressed = CompressBzip2(
+        File.ReadAllBytes(FixturePath()));
+
+    var handler = new FakeHandler(request =>
+    {
+        if (request.RequestUri!.AbsolutePath == "/grib/09/u/")
+        {
+            var listing =
+                $"<html><body><a href=\"{fileName}\">{fileName}</a></body></html>";
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(listing)
+            };
+        }
+
+        if (request.RequestUri.AbsolutePath.EndsWith(
+                fileName,
+                StringComparison.Ordinal))
+        {
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(compressed)
+            };
+        }
+
+        return new HttpResponseMessage(HttpStatusCode.NotFound);
+    });
+
+    var cache = Path.Combine(
+        Path.GetTempPath(),
+        "ESky.Grib.AotSmoke",
+        Guid.NewGuid().ToString("N"));
+
+    try
+    {
+        using var http = new HttpClient(handler);
+        using var client = new IconEuClient(
+            http,
+            new IconEuClientOptions
+            {
+                BaseUri = new Uri("https://example.test/grib/"),
+                CacheDirectory = cache,
+                MaxConcurrentDownloads = 1
+            });
+
+        var result = await client.LoadAsync(new IconEuRequest
+        {
+            RunUtc = new DateTime(
+                2026, 9, 28, 9, 0, 0, DateTimeKind.Utc),
+            Parameters = [IconEuParameter.UComponentOfWind],
+            ForecastHours = [0],
+            PressureLevelsHpa = [500]
+        });
+
+        if (result.FileCount != 1 ||
+            result.DownloadedFileCount != 1 ||
+            result.CacheHitCount != 0)
+        {
+            throw new InvalidOperationException(
+                "ICON-EU loader smoke test failed.");
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(cache))
+            Directory.Delete(cache, recursive: true);
+    }
+}
+
+static string FixturePath()
+{
+    var fixture = Path.Combine(
+        AppContext.BaseDirectory,
+        "TestData",
+        "regular_ll_ccsds.grib2");
+
+    if (!File.Exists(fixture))
+        throw new InvalidOperationException($"GRIB fixture not found: {fixture}");
+
+    return fixture;
+}
+
+static byte[] CompressBzip2(byte[] data)
+{
+    using var output = new MemoryStream();
+
+    using (var bzip2 = new BZip2OutputStream(output)
+    {
+        IsStreamOwner = false
+    })
+    {
+        bzip2.Write(data);
+    }
+
+    return output.ToArray();
+}
+
 static byte[] BuildUncompressedAecBlock(ReadOnlySpan<byte> samples)
 {
-    // With 8-bit samples and unrestricted codes, the AEC identifier is
-    // three bits. 0b111 selects an uncompressed block.
     var totalBits = 3 + samples.Length * 8;
     var result = new byte[(totalBits + 7) / 8];
     var bitPosition = 0;
@@ -142,4 +242,14 @@ static void WriteBits(
 
         bitPosition++;
     }
+}
+
+file sealed class FakeHandler(
+    Func<HttpRequestMessage, HttpResponseMessage> responseFactory)
+    : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(responseFactory(request));
 }

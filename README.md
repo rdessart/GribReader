@@ -1,11 +1,12 @@
 # GribReader
 
-A dependency-free GRIB2 reader core for cross-platform .NET and Avalonia applications.
+A managed GRIB2 reader and ICON-EU weather-data client for cross-platform .NET and Avalonia applications.
 
 ## Projects
 
-- `src/ESky.Grib` — GRIB2 parser, models, packing decoders and weather-query API
-- `tests/ESky.Grib.Tests` — xUnit tests using synthetic messages and real GRIB2 fixtures
+- `src/ESky.Grib` — GRIB2 parser, packing decoders, weather-query API and DWD ICON-EU client
+- `tests/ESky.Grib.Tests` — xUnit tests using synthetic messages, real GRIB2 fixtures and live DWD validation
+- `tests/ESky.Grib.AotSmoke` — NativeAOT smoke application
 
 ## Build
 
@@ -22,79 +23,108 @@ dotnet test GribReader.slnx
 - Data Representation Template 5.42 — CCSDS/AEC adaptive entropy coding
 - Optional Section 6 bitmaps
 - Multiple fields per message and concatenated GRIB2 messages
-- Synchronous and asynchronous Stream APIs
-- Fast nearest-point lookup on regular latitude/longitude grids
-- Application-facing temperature/wind queries by position, pressure level and forecast time
+- Managed BZip2 decompression for DWD transport files
+- Fast nearest-point and bilinear regular-grid lookup
+- Log-pressure interpolation between pressure levels
+- Linear interpolation between forecast valid times
+- Temperature/wind queries by position, pressure level, pressure altitude and valid time
+- DWD ICON-EU run discovery, selective download and local caching
+- NativeAOT/trimming validation in CI
 
-Template 5.42 is implemented entirely in managed C#, without a native
-`libaec` dependency. This keeps the core library usable on Avalonia desktop,
-iOS and Android targets.
+## ICON-EU client
 
-## ICON-EU
-
-Current DWD ICON/ICON-EU Open Data uses CCSDS packing (GRIB2 template 5.42).
-The reader can decode current regular-latitude/longitude instantaneous fields
-that use Product Definition Template 4.0.
-
-DWD distributes many files as `.grib2.bz2`. BZip2 transport decompression is
-outside the GRIB format and is intentionally not part of this core reader:
-pass the decompressed GRIB2 stream to `GribReader`.
-
-The GitHub Actions workflow also contains a scheduled/manual live integration
-job that downloads a current DWD ICON-EU U-wind field and decodes it end-to-end.
-
-## Low-level example
+`IconEuClient` discovers the latest available three-hour ICON-EU run from
+DWD's Open Data directory listings, selects only the requested pressure-level
+files, downloads/decompresses them and returns a ready-to-query
+`GribWeatherDataset`.
 
 ```csharp
-await using var stream = File.OpenRead("weather.grib2");
-var message = await new GribReader().ReadAsync(stream);
+using ESky.Grib.IconEu;
 
-foreach (var field in message.Fields)
+using var client = new IconEuClient();
+
+var progress = new Progress<IconEuLoadProgress>(p =>
 {
-    var nearest = field.GetNearest(50.9014, 4.4844);
     Console.WriteLine(
-        $"{nearest.Latitude:F3}, {nearest.Longitude:F3}: {nearest.Value}");
-}
+        $"{p.Stage}: {p.Completed}/{p.Total} {p.CurrentFile}");
+});
+
+var result = await client.LoadAsync(
+    new IconEuRequest
+    {
+        ForecastHours = [0, 3, 6, 9, 12],
+        PressureLevelsHpa =
+            [1000, 925, 850, 700, 500, 400, 300, 250, 200],
+        Parameters =
+        [
+            IconEuParameter.Temperature,
+            IconEuParameter.UComponentOfWind,
+            IconEuParameter.VComponentOfWind
+        ]
+    },
+    progress);
+
+Console.WriteLine($"ICON-EU run: {result.RunUtc:u}");
+Console.WriteLine(
+    $"Files: {result.FileCount}; downloaded: {result.DownloadedFileCount}; cache hits: {result.CacheHitCount}");
 ```
 
-## Weather dataset example
+By default the cache is stored below the platform's
+`Environment.SpecialFolder.LocalApplicationData` directory. Set
+`IconEuClientOptions.CacheDirectory` to use an application-specific location.
+
+Downloads are written to temporary files and atomically moved into the cache
+only after BZip2 decompression succeeds. Subsequent requests for the same run,
+parameter, forecast hour and pressure level reuse the decompressed GRIB2 file.
+
+For dependency-injection scenarios, pass an application-managed `HttpClient`:
 
 ```csharp
-using ESky.Grib.Weather;
+using var client = new IconEuClient(
+    httpClient,
+    new IconEuClientOptions
+    {
+        CacheDirectory = myCacheDirectory,
+        MaxConcurrentDownloads = 4
+    });
+```
 
-var reader = new GribReader();
-var messages = reader.ReadAll(gribStream);
-var weather = new GribWeatherDataset(messages);
+## Querying the loaded data
 
-var wind = weather.GetWind(
+```csharp
+var wind = result.Dataset.GetWindAtPressureAltitudeFeet(
     latitude: 50.90,
     longitude: 4.48,
-    pressureHpa: 500,
-    forecastOffset: TimeSpan.FromHours(6));
+    altitudeFeet: 34_000,
+    validTimeUtc: DateTime.UtcNow);
 
 if (wind is { } w)
 {
     Console.WriteLine(
         $"{w.SpeedMetersPerSecond:F1} m/s from {w.DirectionFromDegrees:F0}°");
 }
-
-var temperature = weather.GetTemperature(
-    latitude: 50.90,
-    longitude: 4.48,
-    pressureHpa: 500,
-    forecastOffset: TimeSpan.FromHours(6));
 ```
 
-For non-convenience parameters, use `GribWeatherDataset.GetValue` with a
-`GribParameter` and `GribLevel`. `GetValueAtValidTime` is available when
-the application works with UTC valid times rather than forecast offsets.
+The interpolated APIs do not extrapolate. Requests outside the loaded
+horizontal, pressure or forecast-time range return `null`.
+
+Pressure-altitude helpers use ISA pressure altitude and pressure-level fields.
+ICON hybrid/model-level vertical-coordinate reconstruction is not yet
+implemented.
+
+## AOT
+
+The library enables the trimming and AOT analyzers and is exercised by a
+`linux-x64` NativeAOT smoke application in CI. The smoke path includes GRIB
+parsing, managed CCSDS/AEC decoding, interpolation, BZip2 decompression,
+`HttpClient`-based ICON-EU ingestion and cache I/O.
 
 ## Next extensions
 
+- ICON hybrid/model-level vertical-coordinate support
 - Additional Product Definition Templates such as 4.8 for accumulated/statistical fields
-- Additional grid definitions where useful
-- Interpolation between grid points, pressure levels and forecast times
-- Additional WMO parameter constants as application requirements grow
+- Cache retention/eviction policy
+- Additional WMO parameter constants and aviation-derived products
+- Route/profile weather sampling
 
-See `THIRD_PARTY_NOTICES.md` for attribution for the managed AEC decoder and
-the CCSDS integration fixture.
+See `THIRD_PARTY_NOTICES.md` for third-party attributions.

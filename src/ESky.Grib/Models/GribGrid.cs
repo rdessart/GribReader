@@ -54,9 +54,6 @@ public sealed record RegularLatLonGrid(
         var bestI = 0;
         var bestDistance = double.MaxValue;
 
-        // The encoded grid may use either [-180,180] or [0,360] longitudes.
-        // Try equivalent target longitudes so antimeridian-adjacent grids work
-        // without scanning every point.
         for (var wrap = -2; wrap <= 2; wrap++)
         {
             var unwrappedTarget = longitude + wrap * 360.0;
@@ -78,6 +75,83 @@ public sealed record RegularLatLonGrid(
         }
 
         return (bestI, j);
+    }
+
+    /// <summary>
+    /// Converts a geographic position into fractional grid indices suitable
+    /// for bilinear interpolation. Returns false when the position is outside
+    /// the encoded regular latitude/longitude grid.
+    /// </summary>
+    public bool TryGetFractionalIndices(
+        double latitude,
+        double longitude,
+        out double i,
+        out double j)
+    {
+        const double epsilon = 1e-9;
+
+        var latitudeStep = JScansPositively ? JIncrement : -JIncrement;
+
+        if (Height == 1 || latitudeStep == 0)
+        {
+            j = 0;
+        }
+        else
+        {
+            j = (latitude - FirstLatitude) / latitudeStep;
+
+            if (j < -epsilon || j > Height - 1 + epsilon)
+            {
+                i = double.NaN;
+                j = double.NaN;
+                return false;
+            }
+
+            j = Math.Clamp(j, 0, Height - 1);
+        }
+
+        if (Width == 1 || IIncrement == 0)
+        {
+            i = 0;
+            return true;
+        }
+
+        var longitudeStep = IScansNegatively ? -IIncrement : IIncrement;
+        var found = false;
+        var bestI = double.NaN;
+        var bestWrapDistance = double.MaxValue;
+
+        // A GRIB regular-lat/lon grid may encode longitudes in either
+        // [-180, 180] or [0, 360]. Test equivalent longitudes and retain the
+        // representation that falls inside this grid.
+        for (var wrap = -2; wrap <= 2; wrap++)
+        {
+            var unwrappedTarget = longitude + wrap * 360.0;
+            var candidateI = (unwrappedTarget - FirstLongitude) / longitudeStep;
+
+            if (candidateI < -epsilon || candidateI > Width - 1 + epsilon)
+                continue;
+
+            var clampedI = Math.Clamp(candidateI, 0, Width - 1);
+            var encodedLongitude = FirstLongitude + clampedI * longitudeStep;
+            var distance = Math.Abs(encodedLongitude - unwrappedTarget);
+
+            if (distance >= bestWrapDistance)
+                continue;
+
+            bestWrapDistance = distance;
+            bestI = clampedI;
+            found = true;
+        }
+
+        i = bestI;
+
+        if (found)
+            return true;
+
+        i = double.NaN;
+        j = double.NaN;
+        return false;
     }
 
     private static double NormalizeLongitude(double longitude)
